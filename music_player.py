@@ -47,16 +47,19 @@ class YTDLSource(discord.PCMVolumeTransformer):
         self.url = data.get('url')
 
     @classmethod
-    async def from_url(cls, url, *, loop=None, stream=False):
+    async def from_url(cls, url, *, loop=None, stream=True):
         loop = loop or asyncio.get_event_loop()
         data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=not stream))
 
         if 'entries' in data:
-            # take first item from a playlist
-            data = data['entries'][0]
+            play_list = []
+            for video in data['entries']:
+                filename = video['url'] if stream else ytdl.prepare_filename(data)
+                play_list.append(cls(discord.FFmpegPCMAudio(filename, **ffmpeg_options), data=video))
+            return play_list, True
 
         filename = data['url'] if stream else ytdl.prepare_filename(data)
-        return cls(discord.FFmpegPCMAudio(filename, **ffmpeg_options), data=data)
+        return cls(discord.FFmpegPCMAudio(filename, **ffmpeg_options), data=data), False
 
 
 class MusicPlayer(commands.Cog):
@@ -97,7 +100,11 @@ class MusicPlayer(commands.Cog):
         if joined:
             url = await self.find_song_url(song)
             player = await YTDLSource.from_url(url, loop=self.bot.loop, stream=True)
-            self.queue.append(player)
+            if player[1]:
+                for video in player[0]:
+                    self.queue.append(video)
+            else:
+                self.queue.append(player[0])
             if ctx.voice_client.is_playing():
                 await ctx.send('Song queued')
             else:
@@ -133,6 +140,11 @@ class MusicPlayer(commands.Cog):
                 await ctx.send(str(i+1) + '.' + song.title)
         else:
             await ctx.send("Empty queue.")
+
+    @commands.command(name='clear')
+    async def clear(self, ctx):
+        self.queue.clear()
+        await ctx.send("Queue has been cleared")
 
 
 bot = discord.ext.commands.Bot(command_prefix='!')
